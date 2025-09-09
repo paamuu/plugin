@@ -1,9 +1,16 @@
 import * as vscode from 'vscode';
 import { AngularSchematicsProvider } from './providers/angularSchematicsProvider';
 import { SchematicsQuickPick } from './ui/schematicsQuickPick';
+import { CaseWebviewProvider } from './providers/caseWebviewProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
+
+    // 注册Case Webview提供者
+    const caseWebviewProvider = new CaseWebviewProvider(context.extensionUri);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(CaseWebviewProvider.viewType, caseWebviewProvider)
+    );
 
     // 创建状态栏项
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

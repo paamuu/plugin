@@ -43,6 +43,15 @@
           "when": "workspaceFolderCount > 0"
         }
       ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id":"testCase",
+          "name":"Case",
+          "type": "webview"
+        }
+      ]
     }
   },
   "scripts": {
