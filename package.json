@@ -47,9 +47,10 @@
     "views": {
       "explorer": [
         {
-          "id":"testCase",
-          "name":"Case",
-          "type": "webview"
+          "id": "testCase",
+          "name": "Case",
+          "type": "webview",
+          "when": "true"
         }
       ]
     }
