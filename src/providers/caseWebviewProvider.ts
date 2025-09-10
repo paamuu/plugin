@@ -1,28 +1,19 @@
 import * as vscode from 'vscode';
+import { WebviewView } from 'vscode';
 
 export class CaseWebviewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'testCase';
-    private _view?: vscode.WebviewView;
-    private _webviewState: any = {};
 
     constructor(private readonly _extensionUri: vscode.Uri) {}
 
     public resolveWebviewView(
-        webviewView: vscode.WebviewView,
+        webviewView: WebviewView,
         context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
     ) {
-        this._view = webviewView;
-        
-        webviewView.webview.options = {
-            enableScripts: true,
-            localResourceRoots: [this._extensionUri]
-        };
 
-        // 只有在webview还没有内容时才设置HTML
-        if (!webviewView.webview.html) {
-            webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
-        }
+        // 设置HTML内容
+        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
 
         // 处理来自webview的消息
         webviewView.webview.onDidReceiveMessage(
@@ -31,39 +22,11 @@ export class CaseWebviewProvider implements vscode.WebviewViewProvider {
                     case 'alert':
                         vscode.window.showInformationMessage(message.text);
                         return;
-                    case 'saveState':
-                        // 保存webview状态
-                        this._webviewState = message.state;
-                        return;
-                    case 'getState':
-                        // 返回保存的状态
-                        webviewView.webview.postMessage({
-                            command: 'restoreState',
-                            state: this._webviewState
-                        });
-                        return;
                 }
             },
             undefined,
             []
         );
-
-        // 监听webview可见性变化
-        webviewView.onDidChangeVisibility(() => {
-            if (webviewView.visible) {
-                // 当webview变为可见时，恢复状态
-                this._restoreWebviewState();
-            }
-        });
-    }
-
-    private _restoreWebviewState() {
-        if (this._view && this._view.webview) {
-            this._view.webview.postMessage({
-                command: 'restoreState',
-                state: this._webviewState
-            });
-        }
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
@@ -234,15 +197,6 @@ export class CaseWebviewProvider implements vscode.WebviewViewProvider {
 
     <script>
         const vscode = acquireVsCodeApi();
-        let currentState = {
-            caseName: '',
-            caseDescription: '',
-            caseList: [
-                { name: '示例Case 1', status: '进行中' },
-                { name: '示例Case 2', status: '已完成' },
-                { name: '示例Case 3', status: '待处理' }
-            ]
-        };
         
         function showAlert(message) {
             vscode.postMessage({
@@ -270,94 +224,26 @@ export class CaseWebviewProvider implements vscode.WebviewViewProvider {
                 return;
             }
             
-            // 添加到状态中的列表
-            currentState.caseList.push({
-                name: name,
-                status: '待处理'
-            });
-            
-            // 重新渲染列表
-            renderCaseList();
+            // 添加到列表
+            const caseList = document.getElementById('caseList');
+            const newItem = document.createElement('li');
+            newItem.className = 'list-item';
+            newItem.innerHTML = \`
+                <span>\${name}</span>
+                <span class="badge">待处理</span>
+            \`;
+            caseList.appendChild(newItem);
             
             // 清空输入框
             document.getElementById('caseName').value = '';
             document.getElementById('caseDescription').value = '';
-            currentState.caseName = '';
-            currentState.caseDescription = '';
-            
-            // 保存状态
-            saveState();
             
             showAlert(\`已添加Case: \${name}\`);
         }
         
-        function renderCaseList() {
-            const caseList = document.getElementById('caseList');
-            caseList.innerHTML = '';
-            
-            currentState.caseList.forEach(caseItem => {
-                const newItem = document.createElement('li');
-                newItem.className = 'list-item';
-                newItem.innerHTML = \`
-                    <span>\${caseItem.name}</span>
-                    <span class="badge">\${caseItem.status}</span>
-                \`;
-                caseList.appendChild(newItem);
-            });
-        }
-        
-        function saveState() {
-            // 保存所有表单元素的状态
-            currentState.caseName = document.getElementById('caseName').value;
-            currentState.caseDescription = document.getElementById('caseDescription').value;
-            
-            vscode.postMessage({
-                command: 'saveState',
-                state: currentState
-            });
-        }
-        
-        function restoreState(state) {
-            if (state) {
-                currentState = state;
-                
-                // 恢复表单元素的值
-                document.getElementById('caseName').value = currentState.caseName || '';
-                document.getElementById('caseDescription').value = currentState.caseDescription || '';
-                
-                // 恢复列表
-                renderCaseList();
-            }
-        }
-        
-        // 监听输入框变化，实时保存状态
-        function setupEventListeners() {
-            const caseNameInput = document.getElementById('caseName');
-            const caseDescriptionInput = document.getElementById('caseDescription');
-            
-            caseNameInput.addEventListener('input', saveState);
-            caseDescriptionInput.addEventListener('input', saveState);
-        }
-        
-        // 监听来自扩展的消息
-        window.addEventListener('message', event => {
-            const message = event.data;
-            switch (message.command) {
-                case 'restoreState':
-                    restoreState(message.state);
-                    break;
-            }
-        });
-        
         // 页面加载完成后的初始化
         document.addEventListener('DOMContentLoaded', function() {
-            console.log('Case Webview 已加载');
-            setupEventListeners();
-            
-            // 请求恢复状态
-            vscode.postMessage({
-                command: 'getState'
-            });
+            console.log('Case Webview 已加载 - 使用 retainContextWhenHidden');
         });
     </script>
 </body>

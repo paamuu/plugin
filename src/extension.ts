@@ -9,7 +9,12 @@ export function activate(context: vscode.ExtensionContext) {
     // 注册Case Webview提供者
     const caseWebviewProvider = new CaseWebviewProvider(context.extensionUri);
     context.subscriptions.push(
-        vscode.window.registerWebviewViewProvider(CaseWebviewProvider.viewType, caseWebviewProvider)
+        vscode.window.registerWebviewViewProvider(CaseWebviewProvider.viewType, caseWebviewProvider,{
+            webviewOptions:{
+                // 保持webview折叠不删除html元素
+                retainContextWhenHidden:true,
+            }
+        })
     );
 
     // 创建状态栏项
