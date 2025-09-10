@@ -20,6 +20,11 @@
         "command": "angular-schematics.generate",
         "title": "Angular 原理图",
         "category": "Angular"
+      },
+      {
+        "command": "case.showModal",
+        "title": "Case: 打开对话框",
+        "category": "Case"
       }
     ],
     "menus": {

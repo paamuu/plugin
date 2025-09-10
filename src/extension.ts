@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { AngularSchematicsProvider } from './providers/angularSchematicsProvider';
 import { SchematicsQuickPick } from './ui/schematicsQuickPick';
+import * as path from 'path';
 import { CaseWebviewProvider } from './providers/caseWebviewProvider';
 
 export function activate(context: vscode.ExtensionContext) {
@@ -75,6 +76,31 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
         checkAngularProject(statusBarItem);
     });
+    // 注册命令：显示基于 Webview 的“模态”面板（WebviewPanel）
+    const showCaseModal = vscode.commands.registerCommand('case.showModal', async () => {
+        const panel = vscode.window.createWebviewPanel(
+            'caseModal',
+            'Case 对话框',
+            { viewColumn: vscode.ViewColumn.Active, preserveFocus: false },
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true
+            }
+        );
+
+        panel.webview.html = getCaseModalHtml(panel.webview, context.extensionUri);
+
+        panel.webview.onDidReceiveMessage((msg) => {
+            if (msg?.command === 'close') {
+                panel.dispose();
+            }
+            if (msg?.command === 'confirm') {
+                vscode.window.showInformationMessage(`确认: ${msg.payload ?? ''}`);
+                panel.dispose();
+            }
+        });
+    });
+    context.subscriptions.push(showCaseModal);
 }
 
 /**
@@ -115,4 +141,51 @@ async function checkAngularProject(statusBarItem?: vscode.StatusBarItem) {
 
 export function deactivate() {
     console.log('Angular Schematics 扩展已停用');
+}
+
+function getCaseModalHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
+    const nonce = String(Date.now());
+    return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${webview.cspSource} https:; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Case 对话框</title>
+  <style>
+    body { margin:0; padding:16px; background: var(--vscode-editor-background); color: var(--vscode-foreground); font-family: var(--vscode-font-family); }
+    .dialog { max-width: 640px; margin: 0 auto; border: 1px solid var(--vscode-panel-border); border-radius: 8px; padding: 16px; background: var(--vscode-editor-background); }
+    h2 { margin-top: 0; }
+    .row { margin: 12px 0; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: 8px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; }
+    .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+    button { background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: 0; padding: 6px 12px; border-radius: 4px; cursor: pointer; }
+    button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+  </style>
+  </head>
+  <body>
+    <div class="dialog">
+      <h2>Case 对话框</h2>
+      <div class="row">
+        <input id="title" placeholder="标题" />
+      </div>
+      <div class="row">
+        <textarea id="desc" rows="5" placeholder="描述"></textarea>
+      </div>
+      <div class="actions">
+        <button class="secondary" id="cancel">取消</button>
+        <button id="ok">确定</button>
+      </div>
+    </div>
+    <script nonce="${nonce}">
+      const vscode = acquireVsCodeApi();
+      document.getElementById('cancel').addEventListener('click', () => vscode.postMessage({ command: 'close' }));
+      document.getElementById('ok').addEventListener('click', () => {
+        const title = document.getElementById('title').value;
+        const desc = document.getElementById('desc').value;
+        vscode.postMessage({ command: 'confirm', payload: { title, desc } });
+      });
+    </script>
+  </body>
+</html>`;
 }
