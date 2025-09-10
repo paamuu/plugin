@@ -25,6 +25,11 @@
         "command": "case.showModal",
         "title": "Case: 打开对话框",
         "category": "Case"
+      },
+      {
+        "command": "case.showWizard",
+        "title": "Case: 向导(原生)",
+        "category": "Case"
       }
     ],
     "menus": {

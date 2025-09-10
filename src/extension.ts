@@ -101,6 +101,35 @@ export function activate(context: vscode.ExtensionContext) {
         });
     });
     context.subscriptions.push(showCaseModal);
+
+    // 原生多步向导（非webview，原生模态交互）
+    const showWizard = vscode.commands.registerCommand('case.showWizard', async () => {
+        const title = await vscode.window.showInputBox({
+            title: 'Case 向导 - 第一步',
+            prompt: '请输入标题',
+            placeHolder: '标题',
+            ignoreFocusOut: true
+        });
+        if (title === undefined) { return; }
+
+        const desc = await vscode.window.showInputBox({
+            title: 'Case 向导 - 第二步',
+            prompt: '请输入描述',
+            placeHolder: '描述',
+            ignoreFocusOut: true,
+            value: ''
+        });
+        if (desc === undefined) { return; }
+
+        const pick = await vscode.window.showQuickPick([
+            { label: '确定', description: '提交' },
+            { label: '取消', description: '放弃' }
+        ], { title: 'Case 向导 - 确认', placeHolder: '请选择', ignoreFocusOut: true });
+        if (!pick || pick.label === '取消') { return; }
+
+        vscode.window.showInformationMessage(`已提交: ${title} / ${desc}`);
+    });
+    context.subscriptions.push(showWizard);
 }
 
 /**
