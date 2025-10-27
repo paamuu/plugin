@@ -1,0 +1,28 @@
+{
+  "searchPattern": "export",
+  "searchDirectory": "./test-files",
+  "searchTime": "2025-10-27T14:11:57.868Z",
+  "totalResults": 4,
+  "results": [
+    {
+      "file": "./test-files\\utils.js",
+      "lineNumber": 0,
+      "content": "module.exports = { FileUtils, processFiles };"
+    },
+    {
+      "file": "./test-files\\example.ts",
+      "lineNumber": 0,
+      "content": "export class ExampleClass {"
+    },
+    {
+      "file": "./test-files\\example.ts",
+      "lineNumber": 0,
+      "content": "export interface ExampleInterface {"
+    },
+    {
+      "file": "./test-files\\example.ts:export function createExample(name: string)",
+      "lineNumber": 0,
+      "content": " ExampleClass {"
+    }
+  ]
+}

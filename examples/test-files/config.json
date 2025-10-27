@@ -1,0 +1,14 @@
+{
+  "name": "test-project",
+  "version": "1.0.0",
+  "description": "测试项目",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "build": "tsc",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@vscode/ripgrep": "^1.0.0"
+  }
+}
