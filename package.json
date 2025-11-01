@@ -30,6 +30,10 @@
         "command": "case.showWizard",
         "title": "Case: 向导(原生)",
         "category": "Case"
+      },
+       {
+        "command": "extension.searchWithBuiltinRg",
+        "title": "文本搜索"
       }
     ],
     "menus": {

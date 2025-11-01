@@ -3,6 +3,7 @@ import { AngularSchematicsProvider } from './providers/angularSchematicsProvider
 import { SchematicsQuickPick } from './ui/schematicsQuickPick';
 import * as path from 'path';
 import { CaseWebviewProvider } from './providers/caseWebviewProvider';
+import { searchWithBuiltinRg } from './providers/vscode-built-in-ripgrep';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
@@ -70,7 +71,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
 
+
+     const search =  vscode.commands.registerCommand('extension.searchWithBuiltinRg', async () => {
+        searchWithBuiltinRg("viewport");
+      });
     context.subscriptions.push(disposable);
+    context.subscriptions.push(search);
 
     // 监听工作区变化
     vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -218,3 +224,4 @@ function getCaseModalHtml(webview: vscode.Webview, extensionUri: vscode.Uri): st
   </body>
 </html>`;
 }
+
