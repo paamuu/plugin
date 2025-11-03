@@ -4,6 +4,7 @@ import { SchematicsQuickPick } from './ui/schematicsQuickPick';
 import * as path from 'path';
 import { CaseWebviewProvider } from './providers/caseWebviewProvider';
 import { searchWithBuiltinRg } from './providers/vscode-built-in-ripgrep';
+import { batchSearchTextWithTimeout } from './providers/batch-search';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
@@ -74,6 +75,8 @@ export function activate(context: vscode.ExtensionContext) {
 
      const search =  vscode.commands.registerCommand('extension.searchWithBuiltinRg', async () => {
         searchWithBuiltinRg("viewport");
+       const result =  await batchSearchTextWithTimeout(["function test1","abdsd","这是一段测试代码"]);
+       console.log(result);
       });
     context.subscriptions.push(disposable);
     context.subscriptions.push(search);
