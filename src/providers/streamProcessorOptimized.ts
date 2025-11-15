@@ -11,8 +11,8 @@
 
 import * as vscode from 'vscode';
 import axios, { AxiosRequestConfig, AxiosResponse } from 'axios';
-import * as fs from 'fs';
 import * as path from 'path';
+import { FileWriter, FileWriterOptions } from './fileWriter';
 
 /**
  * SSE 数据解析接口
@@ -82,11 +82,9 @@ export class StreamProcessorOptimized {
   private isStopped: boolean = false;
   private batchBuffer: SSEData[] = [];
   private messageQueue: MessageQueueItem[] = [];
-  private fileWriteQueue: string[] = [];
-  private isWritingFile: boolean = false;
+  private fileWriter: FileWriter | null = null;
   private stream: NodeJS.ReadableStream | null = null;
   private messageIntervalId: NodeJS.Timeout | null = null;
-  private fileWriteIntervalId: NodeJS.Timeout | null = null;
   private adaptiveIntervalId: NodeJS.Timeout | null = null;
   
   // 自适应参数
@@ -175,9 +173,9 @@ export class StreamProcessorOptimized {
       // 启动消息发送定时器
       this.startMessageTimer();
       
-      // 启动文件写入定时器
+      // 初始化文件写入器
       if (this.historyFilePath) {
-        this.startFileWriteTimer();
+        this.initializeFileWriter();
       }
 
       // 启动自适应调整定时器
@@ -204,7 +202,9 @@ export class StreamProcessorOptimized {
         response.data.on('data', (chunk: Buffer) => {
           // 检查是否已停止
           if (this.isStopped) {
-            this.cleanup();
+            this.cleanup().catch(() => {
+              // 忽略清理错误
+            });
             resolve();
             return;
           }
@@ -250,6 +250,7 @@ export class StreamProcessorOptimized {
                   }
                   this.flushBatchBuffer();
                   this.flushAllBuffers(); // 确保所有数据都被发送
+                  await this.flushFileWriter();
                   this.options.onComplete?.();
                   this.cleanup();
                   resolve();
@@ -304,7 +305,9 @@ export class StreamProcessorOptimized {
           } catch (error) {
             const err = error instanceof Error ? error : new Error(String(error));
             this.options.onError?.(err);
-            this.cleanup();
+            this.cleanup().catch(() => {
+              // 忽略清理错误
+            });
             reject(err);
           }
         });
@@ -349,7 +352,7 @@ export class StreamProcessorOptimized {
           // 刷新所有缓冲区（确保数据完整性）
           this.flushBatchBuffer();
           this.flushAllBuffers(); // 确保所有数据都被发送
-          this.flushFileQueue();
+          await this.flushFileWriter();
           
           // 验证数据完整性
           if (this.ensureDataIntegrity) {
@@ -363,20 +366,27 @@ export class StreamProcessorOptimized {
           }
           
           this.options.onComplete?.();
-          this.cleanup();
-          resolve();
+          this.cleanup().then(() => {
+            resolve();
+          }).catch((error) => {
+            reject(error);
+          });
         });
 
         response.data.on('error', (error: Error) => {
           this.options.onError?.(error);
-          this.cleanup();
+          this.cleanup().catch(() => {
+            // 忽略清理错误
+          });
           reject(error);
         });
       });
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       this.options.onError?.(err);
-      this.cleanup();
+      this.cleanup().catch(() => {
+        // 忽略清理错误
+      });
       throw err;
     }
   }
@@ -407,8 +417,10 @@ export class StreamProcessorOptimized {
       this.pendingDataBuffer = [];
     }
     
-    // 清理定时器
-    this.cleanup();
+    // 清理定时器（异步，不阻塞）
+    this.cleanup().catch(() => {
+      // 忽略清理错误
+    });
     
     // 发送停止确认消息到webview（包含数据统计）
     if (this.webview) {
@@ -445,9 +457,9 @@ export class StreamProcessorOptimized {
     // 添加到批处理缓冲区
     this.batchBuffer.push(data);
 
-    // 添加到文件写入队列（确保文件记录完整）
-    if (this.historyFilePath) {
-      this.fileWriteQueue.push(JSON.stringify(data) + '\n');
+    // 异步写入文件（不阻塞）
+    if (this.fileWriter) {
+      this.fileWriter.write(JSON.stringify(data) + '\n');
     }
 
     // 如果批处理缓冲区达到大小，立即发送
@@ -750,42 +762,53 @@ export class StreamProcessorOptimized {
   }
 
   /**
-   * 启动文件写入定时器
+   * 初始化文件写入器
    */
-  private startFileWriteTimer(): void {
-    this.fileWriteIntervalId = setInterval(() => {
-      if (this.isStopped) {
-        return;
-      }
-      this.flushFileQueue();
-    }, 1000); // 每秒写入一次文件
-  }
-
-  /**
-   * 刷新文件写入队列
-   */
-  private async flushFileQueue(): Promise<void> {
-    if (this.fileWriteQueue.length === 0 || this.isWritingFile || !this.historyFilePath) {
+  private initializeFileWriter(): void {
+    if (!this.historyFilePath) {
       return;
     }
 
-    this.isWritingFile = true;
-    const dataToWrite = this.fileWriteQueue.join('');
-    this.fileWriteQueue = [];
-
     try {
-      // 确保目录存在
-      const dir = path.dirname(this.historyFilePath);
-      await fs.promises.mkdir(dir, { recursive: true });
+      const options: FileWriterOptions = {
+        filePath: this.historyFilePath,
+        batchSize: 64 * 1024, // 64KB批量写入
+        flushInterval: 1000, // 1秒刷新一次
+        autoFlush: false, // 不自动刷新，提高性能
+        maxQueueLength: 10000, // 最大队列长度
+        queueFullStrategy: 'wait', // 队列满时等待
+        maxRetries: 3, // 最大重试3次
+        retryInterval: 100, // 重试间隔100ms
+        onError: (error) => {
+          // 错误处理，不影响主进程
+          console.error('文件写入错误:', error);
+          this.options.onError?.(error);
+        }
+      };
 
-      // 追加写入文件（异步，不阻塞）
-      await fs.promises.appendFile(this.historyFilePath, dataToWrite, 'utf8');
+      this.fileWriter = new FileWriter(options);
+
+      // 监听错误事件
+      this.fileWriter.on('error', (error: Error) => {
+        console.error('文件写入器错误:', error);
+      });
+
     } catch (error) {
-      console.error('写入历史记录文件失败:', error);
-      // 将数据重新加入队列，以便重试
-      this.fileWriteQueue.unshift(dataToWrite);
-    } finally {
-      this.isWritingFile = false;
+      console.error('初始化文件写入器失败:', error);
+      this.fileWriter = null;
+    }
+  }
+
+  /**
+   * 刷新文件写入器
+   */
+  private async flushFileWriter(): Promise<void> {
+    if (this.fileWriter) {
+      try {
+        await this.fileWriter.flush();
+      } catch (error) {
+        console.error('刷新文件写入器失败:', error);
+      }
     }
   }
 
@@ -990,14 +1013,19 @@ export class StreamProcessorOptimized {
   /**
    * 清理资源（确保数据完整性）
    */
-  private cleanup(): void {
+  private async cleanup(): Promise<void> {
     if (this.messageIntervalId) {
       clearInterval(this.messageIntervalId);
       this.messageIntervalId = null;
     }
-    if (this.fileWriteIntervalId) {
-      clearInterval(this.fileWriteIntervalId);
-      this.fileWriteIntervalId = null;
+    // 关闭文件写入器
+    if (this.fileWriter) {
+      try {
+        await this.fileWriter.close();
+      } catch (error) {
+        console.error('关闭文件写入器失败:', error);
+      }
+      this.fileWriter = null;
     }
     if (this.adaptiveIntervalId) {
       clearInterval(this.adaptiveIntervalId);
@@ -1010,7 +1038,7 @@ export class StreamProcessorOptimized {
     } else {
       this.flushBatchBuffer();
     }
-    this.flushFileQueue();
+    await this.flushFileWriter();
   }
 
   /**
