@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import { WebviewView } from 'vscode';
 import { StreamProcessor, StreamProcessorOptions } from './streamProcessor';
+import { StreamProcessorOptimized, StreamProcessorOptimizedOptions } from './streamProcessorOptimized';
 import * as path from 'path';
 import * as os from 'os';
 
 export class CaseWebviewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'testCase';
     private streamProcessor: StreamProcessor | null = null;
+    private streamProcessorOptimized: StreamProcessorOptimized | null = null;
+    private useOptimizedVersion: boolean = true; // 默认使用优化版本（无需修改webview）
 
     constructor(private readonly _extensionUri: vscode.Uri) {}
 
@@ -35,7 +38,7 @@ export class CaseWebviewProvider implements vscode.WebviewViewProvider {
                         this.handleStopStream();
                         return;
                     case 'messageAck':
-                        // Webview确认收到消息（用于背压控制）
+                        // Webview确认收到消息（用于背压控制，仅原版本需要）
                         if (this.streamProcessor && message.count) {
                             this.streamProcessor.handleMessageAck(message.count);
                         }
@@ -52,11 +55,14 @@ export class CaseWebviewProvider implements vscode.WebviewViewProvider {
      */
     private async handleStartStream(webview: vscode.Webview, message: any): Promise<void> {
         try {
-            const { url, config, historyFilePath } = message;
+            const { url, config, historyFilePath, useOptimized } = message;
 
             // 如果已有流在处理，先停止
             if (this.streamProcessor) {
                 this.streamProcessor.stop();
+            }
+            if (this.streamProcessorOptimized) {
+                this.streamProcessorOptimized.stop();
             }
 
             // 创建历史记录文件路径（如果未提供）
@@ -66,38 +72,78 @@ export class CaseWebviewProvider implements vscode.WebviewViewProvider {
                 `stream-${Date.now()}.jsonl`
             );
 
-            // 创建流处理器
-            const options: StreamProcessorOptions = {
-                webview: webview,
-                messageType: 'streamData',
-                historyFilePath: filePath,
-                batchSize: message.batchSize || 10,
-                messageInterval: message.messageInterval || 50,
-                enableBackpressure: message.enableBackpressure !== false,
-                onData: (data) => {
-                    // 可以在这里添加额外的数据处理逻辑
-                },
-                onError: (error) => {
-                    vscode.window.showErrorMessage(`流式处理错误: ${error.message}`);
-                    webview.postMessage({
-                        type: 'streamError',
-                        error: error.message,
-                        timestamp: Date.now()
-                    });
-                },
-                onComplete: () => {
-                    webview.postMessage({
-                        type: 'streamComplete',
-                        timestamp: Date.now()
-                    });
-                    this.streamProcessor = null;
-                }
-            };
+            // 根据配置选择使用哪个版本
+            const useOptimizedVersion = useOptimized !== false; // 默认使用优化版本
 
-            this.streamProcessor = new StreamProcessor(options);
+            if (useOptimizedVersion) {
+                // 使用优化版本（无需修改webview）
+                const options: StreamProcessorOptimizedOptions = {
+                    webview: webview,
+                    messageType: 'streamData',
+                    historyFilePath: filePath,
+                    initialBatchSize: message.initialBatchSize || 20,
+                    minBatchSize: message.minBatchSize || 5,
+                    maxBatchSize: message.maxBatchSize || 100,
+                    initialMessageInterval: message.initialMessageInterval || 100,
+                    minMessageInterval: message.minMessageInterval || 50,
+                    maxMessageInterval: message.maxMessageInterval || 500,
+                    maxQueueLength: message.maxQueueLength || 2000,
+                    ensureDataIntegrity: message.ensureDataIntegrity !== false, // 默认启用数据完整性保证
+                    enableAdaptive: message.enableAdaptive !== false,
+                    onData: (data) => {
+                        // 可以在这里添加额外的数据处理逻辑
+                    },
+                    onError: (error) => {
+                        vscode.window.showErrorMessage(`流式处理错误: ${error.message}`);
+                        webview.postMessage({
+                            type: 'streamError',
+                            error: error.message,
+                            timestamp: Date.now()
+                        });
+                    },
+                    onComplete: () => {
+                        webview.postMessage({
+                            type: 'streamComplete',
+                            timestamp: Date.now()
+                        });
+                        this.streamProcessorOptimized = null;
+                    }
+                };
 
-            // 启动流处理
-            await this.streamProcessor.processStream(url, config);
+                this.streamProcessorOptimized = new StreamProcessorOptimized(options);
+                await this.streamProcessorOptimized.processStream(url, config);
+            } else {
+                // 使用原版本（需要webview支持消息确认）
+                const options: StreamProcessorOptions = {
+                    webview: webview,
+                    messageType: 'streamData',
+                    historyFilePath: filePath,
+                    batchSize: message.batchSize || 10,
+                    messageInterval: message.messageInterval || 50,
+                    enableBackpressure: message.enableBackpressure !== false,
+                    onData: (data) => {
+                        // 可以在这里添加额外的数据处理逻辑
+                    },
+                    onError: (error) => {
+                        vscode.window.showErrorMessage(`流式处理错误: ${error.message}`);
+                        webview.postMessage({
+                            type: 'streamError',
+                            error: error.message,
+                            timestamp: Date.now()
+                        });
+                    },
+                    onComplete: () => {
+                        webview.postMessage({
+                            type: 'streamComplete',
+                            timestamp: Date.now()
+                        });
+                        this.streamProcessor = null;
+                    }
+                };
+
+                this.streamProcessor = new StreamProcessor(options);
+                await this.streamProcessor.processStream(url, config);
+            }
 
         } catch (error) {
             const err = error instanceof Error ? error : new Error(String(error));
@@ -118,6 +164,11 @@ export class CaseWebviewProvider implements vscode.WebviewViewProvider {
             // 立即停止，不等待
             this.streamProcessor.stop();
             this.streamProcessor = null;
+        }
+        if (this.streamProcessorOptimized) {
+            // 立即停止，不等待
+            this.streamProcessorOptimized.stop();
+            this.streamProcessorOptimized = null;
         }
     }
 
