@@ -34,13 +34,23 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(expandCaseViewCommand);
 
     // 在插件启动时自动展开 Case webview
-    // 使用 ViewExpander 工具类来展开视图
+    // 
+    // ⚠️ 重要限制说明：
+    // 1. VS Code 的按需加载机制：WebviewView 只有在首次需要显示时才会调用 resolveWebviewView
+    // 2. 如果用户从未点击过 Case 视图，resolveWebviewView 不会被调用，视图无法展开
+    // 3. VS Code API 没有提供强制展开 Explorer 中 webview view 的方法
+    // 
+    // ✅ 当前实现的效果：
+    // - 如果视图已解析（用户之前点击过）：可以自动展开
+    // - 如果视图未解析（用户从未点击过）：无法自动展开，但会在用户首次点击时自动展开
+    // 
+    // 📖 详细说明请参考：docs/webview-view-auto-expand-limitations.md
     setTimeout(() => {
         ViewExpander.expandWebviewView(caseWebviewProvider, 25, 200).then(success => {
             if (success) {
-                console.log('Case webview 已成功自动展开');
+                console.log('Case webview 已成功自动展开（视图已解析）');
             } else {
-                console.log('Case webview 将在首次点击时自动展开（已在 resolveWebviewView 中实现）');
+                console.log('Case webview 尚未解析。一旦用户首次点击 Case 视图，它将自动展开（已在 resolveWebviewView 中实现）');
             }
         });
     }, 1200);
