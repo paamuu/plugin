@@ -34,6 +34,11 @@
        {
         "command": "extension.searchWithBuiltinRg",
         "title": "文本搜索"
+      },
+      {
+        "command": "extension.findFiles",
+        "title": "查找文件",
+        "category": "文件操作"
       }
     ],
     "menus": {

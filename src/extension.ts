@@ -5,6 +5,7 @@ import * as path from 'path';
 import { CaseWebviewProvider } from './providers/caseWebviewProvider';
 import { searchWithBuiltinRg } from './providers/vscode-built-in-ripgrep';
 import { batchSearchTextWithTimeout } from './providers/batch-search';
+import { findFilesByName, findAndDisplayFiles } from './providers/fileFinder';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
@@ -139,6 +140,56 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`已提交: ${title} / ${desc}`);
     });
     context.subscriptions.push(showWizard);
+
+    // 注册文件查找命令
+    const findFilesCommand = vscode.commands.registerCommand('extension.findFiles', async () => {
+        // 让用户输入要查找的文件名（多个文件名用逗号分隔）
+        const input = await vscode.window.showInputBox({
+            title: '查找文件',
+            prompt: '请输入要查找的文件名（多个文件名用逗号分隔），例如: package.json,tsconfig.json,angular.json',
+            placeHolder: 'package.json, tsconfig.json',
+            ignoreFocusOut: true
+        });
+
+        if (!input) {
+            return;
+        }
+
+        // 解析输入的文件名
+        const fileNames = input
+            .split(',')
+            .map(name => name.trim())
+            .filter(name => name.length > 0);
+
+        if (fileNames.length === 0) {
+            vscode.window.showErrorMessage('请输入至少一个文件名');
+            return;
+        }
+
+        // 显示查找进度
+        await vscode.window.withProgress(
+            {
+                location: vscode.ProgressLocation.Notification,
+                title: '正在查找文件...',
+                cancellable: false
+            },
+            async () => {
+                // 查找文件并在输出通道显示结果
+                await findAndDisplayFiles(fileNames);
+                
+                // 同时获取文件列表并显示信息
+                const files = await findFilesByName(fileNames);
+                if (files.length > 0) {
+                    vscode.window.showInformationMessage(
+                        `找到 ${files.length} 个文件，详情请查看输出面板`
+                    );
+                } else {
+                    vscode.window.showWarningMessage('未找到任何匹配的文件');
+                }
+            }
+        );
+    });
+    context.subscriptions.push(findFilesCommand);
 }
 
 /**
