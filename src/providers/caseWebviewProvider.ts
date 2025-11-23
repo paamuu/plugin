@@ -10,17 +10,80 @@ export class CaseWebviewProvider implements vscode.WebviewViewProvider {
     private streamProcessor: StreamProcessor | null = null;
     private streamProcessorOptimized: StreamProcessorOptimized | null = null;
     private useOptimizedVersion: boolean = true; // 默认使用优化版本（无需修改webview）
+    private _view: vscode.WebviewView | undefined;
 
     constructor(private readonly _extensionUri: vscode.Uri) {}
+
+    /**
+     * 显示并展开 webview view
+     * @param preserveFocus 是否保持焦点在当前编辑器
+     */
+    public show(preserveFocus?: boolean): void {
+        if (this._view) {
+            this._view.show(preserveFocus);
+        } else {
+            // 如果视图还未解析，尝试通过其他方式触发解析
+            // 注意：这可能需要用户交互才能触发
+            console.log('Case webview 视图尚未解析，无法展开');
+        }
+    }
+
+    /**
+     * 强制触发视图解析（如果可能）
+     * 这个方法尝试通过访问视图属性来触发解析
+     */
+    public async tryResolve(): Promise<boolean> {
+        if (this._view) {
+            return true;
+        }
+        // 无法强制触发解析，需要等待 VS Code 调用 resolveWebviewView
+        return false;
+    }
+
+    /**
+     * 检查视图是否已解析
+     */
+    public isResolved(): boolean {
+        return this._view !== undefined;
+    }
 
     public resolveWebviewView(
         webviewView: WebviewView,
         context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
     ) {
+        // 保存 webview view 引用
+        this._view = webviewView;
 
         // 设置HTML内容
         webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+
+        // 自动展开视图（如果视图是首次解析）
+        // 使用多个 setTimeout 确保在不同时机都尝试展开
+        // 因为视图的可见性状态可能在初始化过程中变化
+        const tryShow = () => {
+            if (this._view) {
+                try {
+                    // 检查视图是否可见，如果不可见则展开
+                    if (!this._view.visible) {
+                        this._view.show(true); // true 表示不抢夺焦点
+                        console.log('Case webview 已自动展开（在 resolveWebviewView 中）');
+                    } else {
+                        console.log('Case webview 已经可见');
+                    }
+                } catch (error) {
+                    console.error('展开 Case webview 时出错:', error);
+                }
+            }
+        };
+
+        // 立即尝试展开
+        tryShow();
+        
+        // 延迟尝试（确保视图完全初始化）
+        setTimeout(tryShow, 100);
+        setTimeout(tryShow, 300);
+        setTimeout(tryShow, 500);
 
         // 处理来自webview的消息
         webviewView.webview.onDidReceiveMessage(

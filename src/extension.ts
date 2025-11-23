@@ -6,6 +6,7 @@ import { CaseWebviewProvider } from './providers/caseWebviewProvider';
 import { searchWithBuiltinRg } from './providers/vscode-built-in-ripgrep';
 import { batchSearchTextWithTimeout } from './providers/batch-search';
 import { findFilesByName, findAndDisplayFiles } from './providers/fileFinder';
+import { ViewExpander } from './utils/viewExpander';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
@@ -20,6 +21,29 @@ export function activate(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    // 注册一个命令来展开 Case webview（用于测试和手动触发）
+    const expandCaseViewCommand = vscode.commands.registerCommand('case.expandView', async () => {
+        if (caseWebviewProvider.isResolved()) {
+            caseWebviewProvider.show(true);
+            vscode.window.showInformationMessage('Case 视图已展开');
+        } else {
+            vscode.window.showWarningMessage('Case 视图尚未初始化，请先点击一次 Case 视图');
+        }
+    });
+    context.subscriptions.push(expandCaseViewCommand);
+
+    // 在插件启动时自动展开 Case webview
+    // 使用 ViewExpander 工具类来展开视图
+    setTimeout(() => {
+        ViewExpander.expandWebviewView(caseWebviewProvider, 25, 200).then(success => {
+            if (success) {
+                console.log('Case webview 已成功自动展开');
+            } else {
+                console.log('Case webview 将在首次点击时自动展开（已在 resolveWebviewView 中实现）');
+            }
+        });
+    }, 1200);
 
     // 创建状态栏项
     const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);

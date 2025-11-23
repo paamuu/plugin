@@ -31,7 +31,7 @@
         "title": "Case: 向导(原生)",
         "category": "Case"
       },
-       {
+      {
         "command": "extension.searchWithBuiltinRg",
         "title": "文本搜索"
       },
@@ -39,6 +39,11 @@
         "command": "extension.findFiles",
         "title": "查找文件",
         "category": "文件操作"
+      },
+      {
+        "command": "case.expandView",
+        "title": "Case: 展开视图",
+        "category": "Case"
       }
     ],
     "menus": {
@@ -100,6 +105,7 @@
   "dependencies": {
     "@angular-devkit/schematics": "^17.0.0",
     "@angular/cli": "^17.0.0",
-    "@vscode/ripgrep": "^1.17.0"
+    "@vscode/ripgrep": "^1.17.0",
+    "axios": "^1.13.2"
   }
 }

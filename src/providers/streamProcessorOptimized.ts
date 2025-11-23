@@ -199,7 +199,7 @@ export class StreamProcessorOptimized {
 
       // 处理流式数据
       return new Promise<void>((resolve, reject) => {
-        response.data.on('data', (chunk: Buffer) => {
+        response.data.on('data',async (chunk: Buffer) => {
           // 检查是否已停止
           if (this.isStopped) {
             this.cleanup().catch(() => {
@@ -312,7 +312,7 @@ export class StreamProcessorOptimized {
           }
         });
 
-        response.data.on('end', () => {
+        response.data.on('end', async () => {
           // 流结束，处理剩余的缓冲区数据
           if (!this.isStopped && lineBuffer.trim()) {
             const trimmedLine = lineBuffer.trim();
