@@ -10,7 +10,7 @@ import { ViewExpander } from './utils/viewExpander';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
-
+    
     // 注册Case Webview提供者
     const caseWebviewProvider = new CaseWebviewProvider(context.extensionUri);
     context.subscriptions.push(
@@ -30,6 +30,7 @@ export function activate(context: vscode.ExtensionContext) {
         } else {
             vscode.window.showWarningMessage('Case 视图尚未初始化，请先点击一次 Case 视图');
         }
+        
     });
     context.subscriptions.push(expandCaseViewCommand);
 
