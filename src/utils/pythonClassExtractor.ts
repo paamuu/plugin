@@ -2,24 +2,133 @@ import * as vscode from 'vscode';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
+// tree-sitter 类型定义
+interface Parser {
+  parse(content: string): Tree;
+  setLanguage(language: Language): void;
+}
+
+interface Tree {
+  rootNode: SyntaxNode;
+}
+
+interface SyntaxNode {
+  type: string;
+  startIndex: number;
+  endIndex: number;
+  children: SyntaxNode[];
+  childForFieldName(name: string): SyntaxNode | null;
+}
+
+interface Language {
+  // tree-sitter language interface
+}
+
 /**
- * Python 类提取器：扫描工作区中的 Python 文件，提取所有 class 名称并保存到文件。
+ * Python 类提取器：使用 tree-sitter 精确解析 Python 文件，提取所有 class 名称并保存到文件。
+ * 
+ * 使用 tree-sitter 进行语法树解析，比正则表达式更准确，能正确处理：
+ * - 嵌套类定义
+ * - 字符串和注释中的 class 关键字
+ * - 各种 Python 语法特性
+ * - 装饰器语法
+ * - 类型注解
  */
 export class PythonClassExtractor {
   private readonly textDecoder = new TextDecoder('utf-8');
+  private parser: Parser | null = null;
+  private pythonLanguage: Language | null = null;
+  private parserInitialized = false;
 
   /**
-   * 从 Python 文件内容中提取所有 class 名称
+   * 初始化 tree-sitter 解析器（延迟加载）
+   */
+  private async initializeParser(): Promise<void> {
+    if (this.parserInitialized) {
+      return;
+    }
+
+    this.parserInitialized = true;
+
+    try {
+      // 动态导入 tree-sitter 和 Python 语法
+      // 使用 require 方式以确保在 VSCode 扩展环境中正常工作
+      const ParserModule = require('tree-sitter');
+      const PythonModule = require('tree-sitter-python');
+      
+      const ParserClass = ParserModule.default || ParserModule;
+      const PythonLang = PythonModule.default || PythonModule;
+      
+      this.pythonLanguage = PythonLang;
+      this.parser = new ParserClass() as Parser;
+      this.parser.setLanguage(this.pythonLanguage);
+    } catch (error) {
+      console.warn('[PythonClassExtractor] tree-sitter 初始化失败，将回退到正则表达式方法:', error);
+      // 如果 tree-sitter 不可用，继续使用正则表达式方法
+      this.parser = null;
+      this.pythonLanguage = null;
+    }
+  }
+
+  /**
+   * 使用 tree-sitter 从 Python 文件内容中提取所有 class 名称
    * 
    * @param content Python 文件内容
    * @returns class 名称数组
    */
-  private extractClassNames(content: string): string[] {
+  private async extractClassNamesWithTreeSitter(content: string): Promise<string[]> {
+    await this.initializeParser();
+
+    if (!this.parser || !this.pythonLanguage) {
+      // 回退到正则表达式方法
+      return this.extractClassNamesWithRegex(content);
+    }
+
+    const classNames: string[] = [];
+
+    try {
+      const tree = this.parser.parse(content);
+      const rootNode = tree.rootNode;
+
+      // 遍历语法树，查找所有 class_def 节点
+      this.traverseTree(rootNode, (node) => {
+        if (node.type === 'class_definition') {
+          // class_definition 节点的第一个命名子节点是类名
+          const nameNode = node.childForFieldName('name');
+          if (nameNode) {
+            const className = content.substring(nameNode.startIndex, nameNode.endIndex);
+            classNames.push(className);
+          }
+        }
+      });
+    } catch (error) {
+      console.warn('[PythonClassExtractor] tree-sitter 解析失败，回退到正则表达式:', error);
+      return this.extractClassNamesWithRegex(content);
+    }
+
+    return classNames;
+  }
+
+  /**
+   * 递归遍历语法树
+   */
+  private traverseTree(node: SyntaxNode, callback: (node: SyntaxNode) => void): void {
+    callback(node);
+    for (const child of node.children) {
+      this.traverseTree(child, callback);
+    }
+  }
+
+  /**
+   * 使用正则表达式提取 class 名称（回退方法）
+   * 
+   * @param content Python 文件内容
+   * @returns class 名称数组
+   */
+  private extractClassNamesWithRegex(content: string): string[] {
     const classNames: string[] = [];
     
     // 匹配 Python class 定义的正则表达式
-    // 支持格式：class ClassName: 或 class ClassName(BaseClass): 等
-    // 使用多行模式，匹配行首（可能有缩进）的 class 关键字
     const classRegex = /^(\s*)class\s+(\w+)/gm;
     
     let match;
@@ -27,13 +136,12 @@ export class PythonClassExtractor {
       const className = match[2];
       
       // 简单检查：确保不在字符串或注释中
-      // 获取匹配位置之前的文本
       const beforeMatch = content.substring(0, match.index);
       const lastNewlineIndex = beforeMatch.lastIndexOf('\n');
       const lineStart = lastNewlineIndex >= 0 ? lastNewlineIndex + 1 : 0;
       const lineBeforeMatch = content.substring(lineStart, match.index);
       
-      // 检查是否在字符串中（简单检查引号）
+      // 检查是否在字符串中
       const singleQuotes = (lineBeforeMatch.match(/'/g) || []).length;
       const doubleQuotes = (lineBeforeMatch.match(/"/g) || []).length;
       const isInString = (singleQuotes % 2 !== 0) || (doubleQuotes % 2 !== 0);
@@ -48,6 +156,16 @@ export class PythonClassExtractor {
     }
     
     return classNames;
+  }
+
+  /**
+   * 从 Python 文件内容中提取所有 class 名称（主方法）
+   * 
+   * @param content Python 文件内容
+   * @returns class 名称数组
+   */
+  private async extractClassNames(content: string): Promise<string[]> {
+    return this.extractClassNamesWithTreeSitter(content);
   }
 
   /**
@@ -99,7 +217,7 @@ export class PythonClassExtractor {
           const buffer = await fs.readFile(filePath);
           const content = this.textDecoder.decode(buffer, { fatal: false });
           
-          const classNames = this.extractClassNames(content);
+          const classNames = await this.extractClassNames(content);
           
           if (classNames.length > 0) {
             results[filePath] = classNames;

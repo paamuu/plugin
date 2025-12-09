@@ -106,6 +106,8 @@
     "@angular-devkit/schematics": "^17.0.0",
     "@angular/cli": "^17.0.0",
     "@vscode/ripgrep": "^1.17.0",
-    "axios": "^1.13.2"
+    "axios": "^1.13.2",
+    "tree-sitter": "^0.20.4",
+    "tree-sitter-python": "^0.20.4"
   }
 }
