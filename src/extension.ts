@@ -7,6 +7,7 @@ import { searchWithBuiltinRg } from './providers/vscode-built-in-ripgrep';
 import { batchSearchTextWithTimeout } from './providers/batch-search';
 import { findFilesByName, findAndDisplayFiles } from './providers/fileFinder';
 import { ViewExpander } from './utils/viewExpander';
+import { EditableDiffProvider } from './providers/editableDiffProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
@@ -175,6 +176,9 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`已提交: ${title} / ${desc}`);
     });
     context.subscriptions.push(showWizard);
+
+    // 注册可编辑 Diff 提供者
+    EditableDiffProvider.register(context);
 
     // 注册文件查找命令
     const findFilesCommand = vscode.commands.registerCommand('extension.findFiles', async () => {

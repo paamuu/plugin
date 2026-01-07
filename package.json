@@ -44,6 +44,16 @@
         "command": "case.expandView",
         "title": "Case: 展开视图",
         "category": "Case"
+      },
+      {
+        "command": "extension.openEditableDiff",
+        "title": "打开可编辑 Diff",
+        "category": "文件对比"
+      },
+      {
+        "command": "extension.saveEditableDiffRight",
+        "title": "保存 Diff 右侧内容",
+        "category": "文件对比"
       }
     ],
     "menus": {
