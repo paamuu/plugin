@@ -56,6 +56,33 @@
         "category": "文件对比"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aiAssistantView",
+          "title": "AI 助手",
+          "icon": "$(symbol-misc)"
+        }
+      ]
+    },
+    "views": {
+      "aiAssistantView": [
+        {
+          "id": "aiAssistant",
+          "name": "AI 助手",
+          "type": "webview",
+          "when": "true"
+        }
+      ],
+      "explorer": [
+        {
+          "id": "testCase",
+          "name": "Case",
+          "type": "webview",
+          "when": "true"
+        }
+      ]
+    },
     "menus": {
       "explorer/context": [
         {
@@ -75,16 +102,6 @@
           "command": "angular-schematics.generate",
           "group": "navigation",
           "when": "workspaceFolderCount > 0"
-        }
-      ]
-    },
-    "views": {
-      "explorer": [
-        {
-          "id": "testCase",
-          "name": "Case",
-          "type": "webview",
-          "when": "true"
         }
       ]
     }

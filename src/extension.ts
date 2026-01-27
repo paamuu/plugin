@@ -3,6 +3,7 @@ import { AngularSchematicsProvider } from './providers/angularSchematicsProvider
 import { SchematicsQuickPick } from './ui/schematicsQuickPick';
 import * as path from 'path';
 import { CaseWebviewProvider } from './providers/caseWebviewProvider';
+import { AiWebviewProvider } from './providers/aiWebviewProvider';
 import { searchWithBuiltinRg } from './providers/vscode-built-in-ripgrep';
 import { batchSearchTextWithTimeout } from './providers/batch-search';
 import { findFilesByName, findAndDisplayFiles } from './providers/fileFinder';
@@ -12,6 +13,17 @@ import { EditableDiffProvider } from './providers/editableDiffProvider';
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
     
+    // 注册AI Webview提供者，传递ExtensionContext用于保存状态
+    const aiWebviewProvider = new AiWebviewProvider(context.extensionUri, context);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(AiWebviewProvider.viewType, aiWebviewProvider, {
+            webviewOptions: {
+                // 保持webview折叠不删除html元素
+                retainContextWhenHidden: true,
+            }
+        })
+    );
+
     // 注册Case Webview提供者
     const caseWebviewProvider = new CaseWebviewProvider(context.extensionUri);
     context.subscriptions.push(
