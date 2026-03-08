@@ -12,6 +12,7 @@
   "activationEvents": [
     "onCommand:angular-schematics.generate",
     "onCommand:extension.sortPythonImports",
+    "onCommand:extension.sortPythonImportsFromSnippet",
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
@@ -60,6 +61,11 @@
         "command": "extension.sortPythonImports",
         "title": "排序 Python 导入（系统库 → 三方库 → 本地）",
         "category": "Python"
+      },
+      {
+        "command": "extension.sortPythonImportsFromSnippet",
+        "title": "排序 Python 导入（对选中片段：输入片段 → 输出排序后片段）",
+        "category": "Python"
       }
     ],
     "viewsContainers": {
@@ -105,6 +111,10 @@
         {
           "command": "extension.sortPythonImports",
           "when": "editorLangId == python"
+        },
+        {
+          "command": "extension.sortPythonImportsFromSnippet",
+          "when": "editorLangId == python"
         }
       ],
       "editor/context": [
@@ -115,6 +125,11 @@
         },
         {
           "command": "extension.sortPythonImports",
+          "group": "1_modification",
+          "when": "editorLangId == python"
+        },
+        {
+          "command": "extension.sortPythonImportsFromSnippet",
           "group": "1_modification",
           "when": "editorLangId == python"
         }

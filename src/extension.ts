@@ -10,6 +10,7 @@ import { findFilesByName, findAndDisplayFiles } from './providers/fileFinder';
 import { ViewExpander } from './utils/viewExpander';
 import { EditableDiffProvider } from './providers/editableDiffProvider';
 import { sortPythonImportsInDocument } from './providers/pythonImportSorter';
+import { sortPythonImportsFromSnippet } from './providers/pythonImportSnippetSorter';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
@@ -258,6 +259,33 @@ export function activate(context: vscode.ExtensionContext) {
         }
     });
     context.subscriptions.push(sortPythonImportsCommand);
+
+    // 对选中的代码片段进行导入排序（输入片段 → 输出排序后片段），可调用 Python/isort/Ruff 或内置逻辑
+    const sortPythonImportsFromSnippetCommand = vscode.commands.registerCommand('extension.sortPythonImportsFromSnippet', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showWarningMessage('请先打开一个 Python 文件并选中要排序的代码片段');
+            return;
+        }
+        if (editor.document.languageId !== 'python') {
+            vscode.window.showWarningMessage('当前文件不是 Python 文件');
+            return;
+        }
+        const range = editor.selection.isEmpty ? new vscode.Range(0, 0, editor.document.lineCount, 0) : editor.selection;
+        const snippet = editor.document.getText(range);
+        if (!snippet.trim()) {
+            vscode.window.showWarningMessage('请先选中一段 Python 代码片段');
+            return;
+        }
+        const sorted = await sortPythonImportsFromSnippet(snippet);
+        if (sorted === snippet) {
+            vscode.window.showInformationMessage('未检测到需要排序的导入，或片段无变化');
+            return;
+        }
+        await editor.edit((eb) => eb.replace(range, sorted));
+        vscode.window.showInformationMessage('已按 系统库 → 三方库 → 本地 对选中片段排序');
+    });
+    context.subscriptions.push(sortPythonImportsFromSnippetCommand);
 }
 
 /**
