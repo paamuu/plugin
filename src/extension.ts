@@ -9,6 +9,7 @@ import { batchSearchTextWithTimeout } from './providers/batch-search';
 import { findFilesByName, findAndDisplayFiles } from './providers/fileFinder';
 import { ViewExpander } from './utils/viewExpander';
 import { EditableDiffProvider } from './providers/editableDiffProvider';
+import { sortPythonImportsInDocument } from './providers/pythonImportSorter';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
@@ -241,6 +242,22 @@ export function activate(context: vscode.ExtensionContext) {
         );
     });
     context.subscriptions.push(findFilesCommand);
+
+    // 排序 Python 导入：系统库 → 三方库 → 本地导入（优先调用 Python/isort 插件，否则内置 tree-sitter 排序）
+    const sortPythonImportsCommand = vscode.commands.registerCommand('extension.sortPythonImports', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showWarningMessage('请先打开一个 Python 文件');
+            return;
+        }
+        const ok = await sortPythonImportsInDocument(editor);
+        if (ok) {
+            vscode.window.showInformationMessage('Python 导入已按 系统库 → 三方库 → 本地 排序');
+        } else {
+            vscode.window.showInformationMessage('未检测到需要排序的导入，或当前文件不是 Python 文件');
+        }
+    });
+    context.subscriptions.push(sortPythonImportsCommand);
 }
 
 /**

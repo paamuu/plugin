@@ -11,6 +11,7 @@
   ],
   "activationEvents": [
     "onCommand:angular-schematics.generate",
+    "onCommand:extension.sortPythonImports",
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
@@ -54,6 +55,11 @@
         "command": "extension.saveEditableDiffRight",
         "title": "保存 Diff 右侧内容",
         "category": "文件对比"
+      },
+      {
+        "command": "extension.sortPythonImports",
+        "title": "排序 Python 导入（系统库 → 三方库 → 本地）",
+        "category": "Python"
       }
     ],
     "viewsContainers": {
@@ -95,6 +101,10 @@
         {
           "command": "angular-schematics.generate",
           "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "extension.sortPythonImports",
+          "when": "editorLangId == python"
         }
       ],
       "editor/context": [
@@ -102,6 +112,11 @@
           "command": "angular-schematics.generate",
           "group": "navigation",
           "when": "workspaceFolderCount > 0"
+        },
+        {
+          "command": "extension.sortPythonImports",
+          "group": "1_modification",
+          "when": "editorLangId == python"
         }
       ]
     }
