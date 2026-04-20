@@ -11,6 +11,7 @@ import { ViewExpander } from './utils/viewExpander';
 import { EditableDiffProvider } from './providers/editableDiffProvider';
 import { sortPythonImportsInDocument } from './providers/pythonImportSorter';
 import { sortPythonImportsFromSnippet } from './providers/pythonImportSnippetSorter';
+import { CodeContinuationProvider } from './providers/inlineCompletionProvider';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
@@ -286,6 +287,33 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage('已按 系统库 → 三方库 → 本地 对选中片段排序');
     });
     context.subscriptions.push(sortPythonImportsFromSnippetCommand);
+
+    // ============================================================
+    // 代码续写（内联补全） + Alt+V 快捷键触发
+    // ============================================================
+    const codeContinuationProvider = new CodeContinuationProvider();
+    context.subscriptions.push(
+        vscode.languages.registerInlineCompletionItemProvider(
+            { pattern: '**' },
+            codeContinuationProvider
+        )
+    );
+
+    // 通过 Alt+V 触发代码续写：先标记"手动触发"，再调用内置命令
+    // editor.action.inlinesuggest.trigger，让 VS Code 向 provider 请求一次补全。
+    const triggerContinuationCmd = vscode.commands.registerCommand(
+        'extension.triggerCodeContinuation',
+        async () => {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showWarningMessage('请先在编辑器中打开一个文件');
+                return;
+            }
+            codeContinuationProvider.setManualTrigger();
+            await vscode.commands.executeCommand('editor.action.inlineSuggest.trigger');
+        }
+    );
+    context.subscriptions.push(triggerContinuationCmd);
 }
 
 /**

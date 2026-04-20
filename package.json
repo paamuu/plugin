@@ -13,6 +13,7 @@
     "onCommand:angular-schematics.generate",
     "onCommand:extension.sortPythonImports",
     "onCommand:extension.sortPythonImportsFromSnippet",
+    "onCommand:extension.triggerCodeContinuation",
     "onStartupFinished"
   ],
   "main": "./out/extension.js",
@@ -66,8 +67,40 @@
         "command": "extension.sortPythonImportsFromSnippet",
         "title": "排序 Python 导入（对选中片段：输入片段 → 输出排序后片段）",
         "category": "Python"
+      },
+      {
+        "command": "extension.triggerCodeContinuation",
+        "title": "代码续写（内联补全）",
+        "category": "AI"
       }
     ],
+    "keybindings": [
+      {
+        "command": "extension.triggerCodeContinuation",
+        "key": "alt+v",
+        "when": "editorTextFocus && !editorReadonly"
+      }
+    ],
+    "configuration": {
+      "title": "代码续写",
+      "properties": {
+        "codeContinuation.endpoint": {
+          "type": "string",
+          "default": "",
+          "description": "代码续写服务的 HTTP 接口地址。留空则使用内置的本地启发式示例。请求 body 为 { prefix, suffix, languageId }，返回 { completion: string } 或纯字符串。"
+        },
+        "codeContinuation.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "代码续写服务的 API Key（可选），会作为 Authorization: Bearer <key> 请求头发送。"
+        },
+        "codeContinuation.timeoutMs": {
+          "type": "number",
+          "default": 8000,
+          "description": "代码续写请求超时时间（毫秒）。"
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {

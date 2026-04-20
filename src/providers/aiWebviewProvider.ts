@@ -98,10 +98,10 @@ export class AiWebviewProvider implements vscode.WebviewViewProvider {
             this._messageDisposable = undefined;
         }
         this._view = undefined;
-        this._isInitialized = false;
+        // this._isInitialized = false;
     }
 
-    public resolveWebviewView(
+    public async resolveWebviewView(
         webviewView: WebviewView,
         context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
