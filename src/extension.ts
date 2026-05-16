@@ -12,10 +12,12 @@ import { EditableDiffProvider } from './providers/editableDiffProvider';
 import { sortPythonImportsInDocument } from './providers/pythonImportSorter';
 import { sortPythonImportsFromSnippet } from './providers/pythonImportSnippetSorter';
 import { registerStreamingCodeContinuation } from './providers/streamingCodeContinuation';
+import { HealthCheckService } from './health/healthCheck';
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
-    
+    const health = new HealthCheckService(context);
+    health.start();
     // 注册AI Webview提供者，传递ExtensionContext用于保存状态
     const aiWebviewProvider = new AiWebviewProvider(context.extensionUri, context);
     context.subscriptions.push(
