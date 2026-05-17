@@ -1,30 +1,27 @@
 /**
- * IDE 插件健康检查服务。
+ * IDE 插件健康检查服务（文件心跳方案）。
  *
- * 通过 better-sqlite3 的 .node 原生绑定，将每个 VS Code 进程（即每个挂载了
- * 本插件的 IDE 窗口）的心跳写入一个共享的 SQLite 数据库文件，从而可以判断：
- *   1) 当前插件是否正在被任何 IDE 实例使用（`isAnyInstanceAlive`）；
- *   2) 哪些 IDE 实例当前活跃（`listAliveInstances`）；
- *   3) 自身实例是否仍被认为是“活的”（`isSelfAlive`）。
+ * 每个 IDE 实例在共享目录下维护独立的心跳文件，通过文件时间戳判断实例存活状态。
+ * 相比 SQLite 方案，此实现：
+ *   - 零原生依赖，天然跨平台
+ *   - 单实例单文件，无并发写冲突
+ *   - 可打包为单一 VSIX 支持所有平台
  *
- * 默认每 15 秒写一次心跳，超过 60 秒未更新即视为离线。可通过构造参数调整。
+ * 默认每 10 秒写一次心跳，超过 60 秒未更新即视为离线。可通过构造参数调整。
  */
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { Database } from './sqliteAddon';
 
 export interface HealthCheckOptions {
-    /** 写入心跳的间隔（毫秒）。默认 15000。 */
+    /** 写入心跳的间隔（毫秒）。默认 10000。 */
     heartbeatIntervalMs?: number;
     /** 多久未更新心跳即视为离线（毫秒）。默认 60000。 */
     aliveThresholdMs?: number;
-    /** SQLite 数据库文件存放目录。默认使用 `context.globalStorageUri`。 */
+    /** 心跳文件存放目录。默认使用 `context.globalStorageUri`。 */
     storageDir?: string;
-    /** SQLite 文件名。默认 `ide-health.db`。 */
-    databaseFileName?: string;
 }
 
 export interface InstanceHeartbeat {
@@ -40,10 +37,9 @@ export interface InstanceHeartbeat {
 
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 10000;
 const DEFAULT_ALIVE_THRESHOLD_MS = 60000;
-const DEFAULT_DB_FILE_NAME = 'ide-health.db';
+const HEALTH_DIR_NAME = 'ide-health';
 
 export class HealthCheckService implements vscode.Disposable {
-    private readonly extensionPath: string;
     private readonly instanceId: string;
     private readonly pid: number;
     private readonly hostname: string;
@@ -53,15 +49,14 @@ export class HealthCheckService implements vscode.Disposable {
     private readonly startedAt: number;
     private readonly heartbeatIntervalMs: number;
     private readonly aliveThresholdMs: number;
-    private readonly dbFilePath: string;
+    private readonly healthDir: string;
+    private readonly heartbeatFilePath: string;
 
-    private db: Database | null = null;
     private heartbeatTimer: NodeJS.Timeout | null = null;
     private disposed = false;
-    private warnedWriteSkipped = false;
+    private startCalled = false;
 
     constructor(context: vscode.ExtensionContext, options: HealthCheckOptions = {}) {
-        this.extensionPath = context.extensionPath;
         this.instanceId = generateInstanceId();
         this.pid = process.pid;
         this.hostname = safeHostname();
@@ -73,41 +68,35 @@ export class HealthCheckService implements vscode.Disposable {
         this.aliveThresholdMs = options.aliveThresholdMs ?? DEFAULT_ALIVE_THRESHOLD_MS;
 
         const storageDir = options.storageDir ?? context.globalStorageUri.fsPath;
-        this.dbFilePath = path.join(storageDir, options.databaseFileName ?? DEFAULT_DB_FILE_NAME);
+        this.healthDir = path.join(storageDir, HEALTH_DIR_NAME);
+        this.heartbeatFilePath = path.join(this.healthDir, `${this.instanceId}.json`);
     }
 
     /**
-     * 启动健康检查：建立数据库连接、写入第一条心跳，并按间隔持续写入。
-     * 失败时返回 false 但不抛错——健康检查不应阻塞插件主流程。
+     * 启动健康检查：创建心跳目录、写入第一条心跳，并按间隔持续写入。
      */
-    start(): boolean {
+    start(): void {
         if (this.disposed) {
-            return false;
+            return;
         }
         try {
-            const storageDir = path.dirname(this.dbFilePath);
-            if (!fs.existsSync(storageDir)) {
-                fs.mkdirSync(storageDir, { recursive: true });
+            if (!fs.existsSync(this.healthDir)) {
+                fs.mkdirSync(this.healthDir, { recursive: true });
             }
-
-            this.db = new Database(this.extensionPath, this.dbFilePath, { timeout: 5000 });
-            this.initSchema(this.db);
             this.writeHeartbeat();
             this.heartbeatTimer = setInterval(() => {
                 this.writeHeartbeat();
             }, this.heartbeatIntervalMs);
+            this.startCalled = true;
             console.log(
-                `[HealthCheckService] 已启动，db=${this.dbFilePath}，instanceId=${this.instanceId}`
+                `[HealthCheckService] 已启动，dir=${this.healthDir}，instanceId=${this.instanceId}`
             );
-            // 避免阻塞 VS Code 退出。
+            // 不阻塞 VS Code 退出。
             if (typeof this.heartbeatTimer.unref === 'function') {
                 this.heartbeatTimer.unref();
             }
-            return true;
         } catch (err) {
             console.error('[HealthCheckService] 启动失败:', err);
-            this.safeCloseDb();
-            return false;
         }
     }
 
@@ -116,51 +105,47 @@ export class HealthCheckService implements vscode.Disposable {
         return this.instanceId;
     }
 
-    /** SQLite 数据库文件的绝对路径，便于诊断。 */
-    getDatabaseFilePath(): string {
-        return this.dbFilePath;
+    /** 心跳文件存放目录的绝对路径，便于诊断。 */
+    getHealthDir(): string {
+        return this.healthDir;
     }
 
     /**
-     * 列出所有“活的” IDE 实例（在 `aliveThresholdMs` 内有过心跳）。
+     * 列出所有"活的" IDE 实例（在 `aliveThresholdMs` 内有过心跳）。
      */
     listAliveInstances(now: number = Date.now()): InstanceHeartbeat[] {
-        if (!this.db) {
-            return [];
-        }
         const cutoff = now - this.aliveThresholdMs;
-        try {
-            const rows = this.db
-                .prepare(
-                    `SELECT instance_id, pid, hostname, platform, arch, extension_version, started_at, last_heartbeat
-                     FROM ide_health_instances
-                     WHERE last_heartbeat >= ?
-                     ORDER BY last_heartbeat DESC`
-                )
-                .all<{
-                    instance_id: string;
-                    pid: number;
-                    hostname: string;
-                    platform: string;
-                    arch: string;
-                    extension_version: string;
-                    started_at: number;
-                    last_heartbeat: number;
-                }>(cutoff);
-            return rows.map((r) => ({
-                instanceId: r.instance_id,
-                pid: r.pid,
-                hostname: r.hostname,
-                platform: r.platform,
-                arch: r.arch,
-                extensionVersion: r.extension_version,
-                startedAt: r.started_at,
-                lastHeartbeat: r.last_heartbeat,
-            }));
-        } catch (err) {
-            console.error('[HealthCheckService] listAliveInstances 失败:', err);
-            return [];
+        const result: InstanceHeartbeat[] = [];
+
+        if (!fs.existsSync(this.healthDir)) {
+            return result;
         }
+
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(this.healthDir, { withFileTypes: true });
+        } catch {
+            return result;
+        }
+
+        for (const entry of entries) {
+            if (!entry.isFile() || !entry.name.endsWith('.json')) {
+                continue;
+            }
+            const filePath = path.join(this.healthDir, entry.name);
+            try {
+                const raw = fs.readFileSync(filePath, 'utf-8');
+                const hb = JSON.parse(raw) as InstanceHeartbeat;
+                if (hb && typeof hb.lastHeartbeat === 'number' && hb.lastHeartbeat >= cutoff) {
+                    result.push(hb);
+                }
+            } catch {
+                // 文件可能损坏或被并发删除，跳过
+            }
+        }
+
+        result.sort((a, b) => b.lastHeartbeat - a.lastHeartbeat);
+        return result;
     }
 
     /** 是否至少有一个 IDE 实例（包括自己）正在使用本插件。 */
@@ -170,87 +155,84 @@ export class HealthCheckService implements vscode.Disposable {
 
     /** 当前实例自身是否还被视作活的（用于自检）。 */
     isSelfAlive(now: number = Date.now()): boolean {
-        if (!this.db) {
+        if (!fs.existsSync(this.heartbeatFilePath)) {
             return false;
         }
-        const cutoff = now - this.aliveThresholdMs;
         try {
-            const row = this.db
-                .prepare(
-                    `SELECT last_heartbeat FROM ide_health_instances
-                     WHERE instance_id = ? AND last_heartbeat >= ?`
-                )
-                .get<{ last_heartbeat: number }>(this.instanceId, cutoff);
-            return !!row;
-        } catch (err) {
-            console.error('[HealthCheckService] isSelfAlive 失败:', err);
+            const raw = fs.readFileSync(this.heartbeatFilePath, 'utf-8');
+            const hb = JSON.parse(raw) as InstanceHeartbeat;
+            return hb && typeof hb.lastHeartbeat === 'number'
+                && hb.lastHeartbeat >= now - this.aliveThresholdMs;
+        } catch {
             return false;
         }
     }
 
     /**
-     * 立即写一次心跳。在收到外部健康检查请求时也可主动调用以"刷一下"自己。
+     * 立即写一次心跳。
      */
     writeHeartbeat(): void {
-        if (!this.db) {
-            if (!this.warnedWriteSkipped) {
-                this.warnedWriteSkipped = true;
-                console.warn(
-                    '[HealthCheckService] writeHeartbeat 跳过：数据库未就绪（start() 可能失败或未调用）'
-                );
-            }
-            return;
-        }
-        const now = Date.now();
-        const db = this.db;
         try {
-            // 每次写入重新 prepare，避免复用 Statement 时参数绑定残留导致仅首写成功
-            const updated = db
-                .prepare(
-                    `UPDATE ide_health_instances SET
-                         pid = ?,
-                         hostname = ?,
-                         platform = ?,
-                         arch = ?,
-                         extension_version = ?,
-                         last_heartbeat = ?
-                     WHERE instance_id = ?`
-                )
-                .run(
-                    this.pid,
-                    this.hostname,
-                    this.platform,
-                    this.arch,
-                    this.extensionVersion,
-                    now,
-                    this.instanceId
-                );
-            if (Number(updated.changes ?? 0) === 0) {
-                db.prepare(
-                    `INSERT INTO ide_health_instances (
-                         instance_id, pid, hostname, platform, arch, extension_version, started_at, last_heartbeat
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-                ).run(
-                    this.instanceId,
-                    this.pid,
-                    this.hostname,
-                    this.platform,
-                    this.arch,
-                    this.extensionVersion,
-                    this.startedAt,
-                    now
-                );
-            }
-            db.prepare(
-                `DELETE FROM ide_health_instances WHERE last_heartbeat < ?`
-            ).run(now - this.aliveThresholdMs);
-            db.checkpointWal();
+            const hb: InstanceHeartbeat = {
+                instanceId: this.instanceId,
+                pid: this.pid,
+                hostname: this.hostname,
+                platform: this.platform,
+                arch: this.arch,
+                extensionVersion: this.extensionVersion,
+                startedAt: this.startedAt,
+                lastHeartbeat: Date.now(),
+            };
+            fs.writeFileSync(this.heartbeatFilePath, JSON.stringify(hb, null, 2), 'utf-8');
+            // 顺便清理过期的心跳文件
+            this.cleanupDeadInstances();
         } catch (err) {
             console.error('[HealthCheckService] 写入心跳失败:', err);
         }
     }
 
-    /** 停止心跳、删除自身记录并关闭数据库。 */
+    /**
+     * 清理过期的心跳文件（超过 `aliveThresholdMs` 未更新）。
+     */
+    cleanupDeadInstances(now: number = Date.now()): void {
+        const cutoff = now - this.aliveThresholdMs;
+        if (!fs.existsSync(this.healthDir)) {
+            return;
+        }
+        let entries: fs.Dirent[];
+        try {
+            entries = fs.readdirSync(this.healthDir, { withFileTypes: true });
+        } catch {
+            return;
+        }
+        for (const entry of entries) {
+            if (!entry.isFile() || !entry.name.endsWith('.json')) {
+                continue;
+            }
+            // 跳过自身文件
+            if (entry.name === `${this.instanceId}.json`) {
+                continue;
+            }
+            const filePath = path.join(this.healthDir, entry.name);
+            try {
+                const raw = fs.readFileSync(filePath, 'utf-8');
+                const hb = JSON.parse(raw) as InstanceHeartbeat;
+                if (hb && typeof hb.lastHeartbeat === 'number' && hb.lastHeartbeat < cutoff) {
+                    fs.unlinkSync(filePath);
+                    console.log(`[HealthCheckService] 清理过期心跳: ${entry.name}`);
+                }
+            } catch {
+                // 读取失败的文件可能是损坏的，也尝试清理
+                try {
+                    fs.unlinkSync(filePath);
+                } catch {
+                    // 忽略清理失败
+                }
+            }
+        }
+    }
+
+    /** 停止心跳、删除自身心跳文件。 */
     dispose(): void {
         if (this.disposed) {
             return;
@@ -260,50 +242,13 @@ export class HealthCheckService implements vscode.Disposable {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
         }
-        if (this.db) {
-            try {
-                this.db
-                    .prepare(`DELETE FROM ide_health_instances WHERE instance_id = ?`)
-                    .run(this.instanceId);
-            } catch (err) {
-                console.error('[HealthCheckService] 注销实例失败:', err);
-            }
-        }
-        this.safeCloseDb();
-    }
-
-    private initSchema(db: Database): void {
-        // 使用 WAL 提升并发性，多个 IDE 实例同时读写同一个 db 文件更友好。
-        db.exec(`
-            PRAGMA journal_mode = WAL;
-            PRAGMA synchronous = NORMAL;
-
-            CREATE TABLE IF NOT EXISTS ide_health_instances (
-                instance_id        TEXT PRIMARY KEY,
-                pid                INTEGER NOT NULL,
-                hostname           TEXT NOT NULL,
-                platform           TEXT NOT NULL,
-                arch               TEXT NOT NULL,
-                extension_version  TEXT NOT NULL,
-                started_at         INTEGER NOT NULL,
-                last_heartbeat     INTEGER NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_ide_health_last_heartbeat
-                ON ide_health_instances(last_heartbeat);
-        `);
-    }
-
-    private safeCloseDb(): void {
-        if (!this.db) {
-            return;
-        }
         try {
-            this.db.close();
+            if (fs.existsSync(this.heartbeatFilePath)) {
+                fs.unlinkSync(this.heartbeatFilePath);
+            }
         } catch (err) {
-            console.error('[HealthCheckService] 关闭数据库失败:', err);
+            console.error('[HealthCheckService] 删除心跳文件失败:', err);
         }
-        this.db = null;
     }
 }
 

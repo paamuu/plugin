@@ -14,12 +14,14 @@ import { sortPythonImportsFromSnippet } from './providers/pythonImportSnippetSor
 import { registerStreamingCodeContinuation } from './providers/streamingCodeContinuation';
 import { HealthCheckService } from './health/healthCheck';
 
+let healthService: HealthCheckService | null = null;
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
     const health = new HealthCheckService(context);
-    if (health.start()) {
-        context.subscriptions.push(health);
-    }
+    health.start();
+    context.subscriptions.push(health);
+    healthService = health;
     // 注册AI Webview提供者，传递ExtensionContext用于保存状态
     const aiWebviewProvider = new AiWebviewProvider(context.extensionUri, context);
     context.subscriptions.push(
@@ -333,6 +335,67 @@ async function checkAngularProject(statusBarItem?: vscode.StatusBarItem) {
 
 export function deactivate() {
     console.log('Angular Schematics 扩展已停用');
+
+    if (!healthService) {
+        return;
+    }
+
+    const selfId = healthService.getInstanceId();
+
+    // 列出除自身外的所有存活实例
+    const allAlive = healthService.listAliveInstances();
+    const otherInstances = allAlive.filter(i => i.instanceId !== selfId);
+
+    console.log(
+        `[deactivate] 自身实例: ${selfId}, 存活实例总数: ${allAlive.length}, 其他实例数: ${otherInstances.length}`
+    );
+
+    if (otherInstances.length === 0) {
+        // 当前是最后一个（或唯一一个）使用插件的 IDE 实例 → 执行全局清理
+        console.log('[deactivate] 所有 IDE 实例已关闭，执行全局清理...');
+        performGlobalCleanup(healthService);
+    } else {
+        console.log(
+            `[deactivate] 仍有 ${otherInstances.length} 个 IDE 实例在使用插件，跳过全局清理`
+        );
+    }
+}
+
+/**
+ * 当所有 IDE 实例都已关闭时执行的全局清理逻辑。
+ * 可根据业务需求扩展此函数。
+ */
+function performGlobalCleanup(health: HealthCheckService): void {
+    const healthDir = health.getHealthDir();
+
+    // 清理残留的心跳文件（正常情况下已被各实例的 dispose 清理）
+    const fs = require('fs');
+    const path = require('path');
+    if (fs.existsSync(healthDir)) {
+        try {
+            const remaining = fs.readdirSync(healthDir);
+            for (const file of remaining) {
+                const filePath = path.join(healthDir, file);
+                try {
+                    fs.unlinkSync(filePath);
+                    console.log(`[globalCleanup] 清理残留文件: ${file}`);
+                } catch {
+                    // 忽略单个文件清理失败
+                }
+            }
+            // 如果目录为空则删除目录
+            try {
+                fs.rmdirSync(healthDir);
+                console.log(`[globalCleanup] 已删除心跳目录: ${healthDir}`);
+            } catch {
+                // 目录可能不为空
+            }
+        } catch (err) {
+            console.error('[globalCleanup] 清理心跳目录失败:', err);
+        }
+    }
+
+    console.log('[globalCleanup] 全局清理完成');
 }
 
 function getCaseModalHtml(webview: vscode.Webview, extensionUri: vscode.Uri): string {
