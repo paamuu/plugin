@@ -17,7 +17,9 @@ import { HealthCheckService } from './health/healthCheck';
 export function activate(context: vscode.ExtensionContext) {
     console.log('Angular Schematics 扩展已激活');
     const health = new HealthCheckService(context);
-    health.start();
+    if (health.start()) {
+        context.subscriptions.push(health);
+    }
     // 注册AI Webview提供者，传递ExtensionContext用于保存状态
     const aiWebviewProvider = new AiWebviewProvider(context.extensionUri, context);
     context.subscriptions.push(

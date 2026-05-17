@@ -10,6 +10,7 @@
  * 默认每 15 秒写一次心跳，超过 60 秒未更新即视为离线。可通过构造参数调整。
  */
 import * as crypto from 'crypto';
+import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
@@ -37,8 +38,8 @@ export interface InstanceHeartbeat {
     lastHeartbeat: number;
 }
 
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000;
-const DEFAULT_ALIVE_THRESHOLD_MS = 60_000;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 10000;
+const DEFAULT_ALIVE_THRESHOLD_MS = 60000;
 const DEFAULT_DB_FILE_NAME = 'ide-health.db';
 
 export class HealthCheckService implements vscode.Disposable {
@@ -57,6 +58,7 @@ export class HealthCheckService implements vscode.Disposable {
     private db: Database | null = null;
     private heartbeatTimer: NodeJS.Timeout | null = null;
     private disposed = false;
+    private warnedWriteSkipped = false;
 
     constructor(context: vscode.ExtensionContext, options: HealthCheckOptions = {}) {
         this.extensionPath = context.extensionPath;
@@ -83,14 +85,20 @@ export class HealthCheckService implements vscode.Disposable {
             return false;
         }
         try {
+            const storageDir = path.dirname(this.dbFilePath);
+            if (!fs.existsSync(storageDir)) {
+                fs.mkdirSync(storageDir, { recursive: true });
+            }
+
             this.db = new Database(this.extensionPath, this.dbFilePath, { timeout: 5000 });
             this.initSchema(this.db);
-            // 启动时清理一次明显过期的记录，避免历史数据无限增长。
-            this.pruneStale(this.db);
             this.writeHeartbeat();
             this.heartbeatTimer = setInterval(() => {
                 this.writeHeartbeat();
             }, this.heartbeatIntervalMs);
+            console.log(
+                `[HealthCheckService] 已启动，db=${this.dbFilePath}，instanceId=${this.instanceId}`
+            );
             // 避免阻塞 VS Code 退出。
             if (typeof this.heartbeatTimer.unref === 'function') {
                 this.heartbeatTimer.unref();
@@ -185,24 +193,44 @@ export class HealthCheckService implements vscode.Disposable {
      */
     writeHeartbeat(): void {
         if (!this.db) {
+            if (!this.warnedWriteSkipped) {
+                this.warnedWriteSkipped = true;
+                console.warn(
+                    '[HealthCheckService] writeHeartbeat 跳过：数据库未就绪（start() 可能失败或未调用）'
+                );
+            }
             return;
         }
         const now = Date.now();
+        const db = this.db;
         try {
-            this.db
+            // 每次写入重新 prepare，避免复用 Statement 时参数绑定残留导致仅首写成功
+            const updated = db
                 .prepare(
-                    `INSERT INTO ide_health_instances (
-                         instance_id, pid, hostname, platform, arch, extension_version, started_at, last_heartbeat
-                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                     ON CONFLICT(instance_id) DO UPDATE SET
-                         pid = excluded.pid,
-                         hostname = excluded.hostname,
-                         platform = excluded.platform,
-                         arch = excluded.arch,
-                         extension_version = excluded.extension_version,
-                         last_heartbeat = excluded.last_heartbeat`
+                    `UPDATE ide_health_instances SET
+                         pid = ?,
+                         hostname = ?,
+                         platform = ?,
+                         arch = ?,
+                         extension_version = ?,
+                         last_heartbeat = ?
+                     WHERE instance_id = ?`
                 )
                 .run(
+                    this.pid,
+                    this.hostname,
+                    this.platform,
+                    this.arch,
+                    this.extensionVersion,
+                    now,
+                    this.instanceId
+                );
+            if (Number(updated.changes ?? 0) === 0) {
+                db.prepare(
+                    `INSERT INTO ide_health_instances (
+                         instance_id, pid, hostname, platform, arch, extension_version, started_at, last_heartbeat
+                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+                ).run(
                     this.instanceId,
                     this.pid,
                     this.hostname,
@@ -212,6 +240,11 @@ export class HealthCheckService implements vscode.Disposable {
                     this.startedAt,
                     now
                 );
+            }
+            db.prepare(
+                `DELETE FROM ide_health_instances WHERE last_heartbeat < ?`
+            ).run(now - this.aliveThresholdMs);
+            db.checkpointWal();
         } catch (err) {
             console.error('[HealthCheckService] 写入心跳失败:', err);
         }
@@ -259,18 +292,6 @@ export class HealthCheckService implements vscode.Disposable {
             CREATE INDEX IF NOT EXISTS idx_ide_health_last_heartbeat
                 ON ide_health_instances(last_heartbeat);
         `);
-    }
-
-    private pruneStale(db: Database): void {
-        // 清理超过 7 天没有心跳的死实例，避免无限增长。
-        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-        try {
-            db.prepare(`DELETE FROM ide_health_instances WHERE last_heartbeat < ?`).run(
-                sevenDaysAgo
-            );
-        } catch (err) {
-            console.error('[HealthCheckService] pruneStale 失败:', err);
-        }
     }
 
     private safeCloseDb(): void {

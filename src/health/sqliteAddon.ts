@@ -4,23 +4,13 @@
  * 该文件不依赖 npm 上的 `better-sqlite3` 包，直接加载预先放置在 `resource/`
  * 目录下的 .node 二进制文件，并暴露够用的 `Database` / `Statement` API
  * 供 IDE 健康检查使用。
- *
- * 二进制文件命名约定（位于 `<extensionRoot>/resource/`）：
- *   - 默认（含 Windows / 其他平台）：`better_sqlite3.node`
- *   - Linux ARM64：                  `better_sqlite3-linux-arm64.node`
- *
- * 使用 `process.dlopen` 而非 `require()` 加载，原因是：
- *   1) esbuild 在 `bundle: true` 模式下不会尝试解析 .node 文件，避免打包报错；
- *   2) 可以使用运行期计算出的绝对路径，跨平台行为更稳定。
  */
 import * as fs from 'fs';
 import * as path from 'path';
 
-/**
- * 与 better-sqlite3 内部 `SqliteError` 形态保持一致：构造函数签名为
- * `(message, code)`，并暴露 `code` 字段。native 层在出错时会通过
- * `setErrorConstructor` 注册的构造函数创建错误对象。
- */
+/** 与 better-sqlite3 一致：native Database 挂在 JS 包装对象的该 Symbol 上。 */
+const CPPDB = Symbol();
+
 export class SqliteError extends Error {
     public code: string;
 
@@ -66,11 +56,10 @@ interface NativeStatement {
     bind(...args: unknown[]): NativeStatement;
 }
 
+type DatabaseWithCppdb = Database & { [typeof CPPDB]: NativeDatabase };
+
 let cachedAddon: NativeAddon | null = null;
 
-/**
- * 根据当前进程的平台 / 架构选择应当加载的二进制文件名。
- */
 export function resolveBinaryFileName(
     platform: NodeJS.Platform = process.platform,
     arch: string = process.arch
@@ -81,19 +70,10 @@ export function resolveBinaryFileName(
     return 'better_sqlite3.node';
 }
 
-/**
- * 根据扩展根目录定位二进制文件的绝对路径。
- */
 export function resolveBinaryPath(extensionPath: string): string {
     return path.join(extensionPath, 'resource', resolveBinaryFileName());
 }
 
-/**
- * 加载并初始化 better-sqlite3 的原生绑定。多次调用返回同一个 addon。
- *
- * 备注：`setErrorConstructor` 只允许调用一次，因此使用 `isInitialized`
- * 作为幂等标记（与 better-sqlite3 官方 wrapper 行为一致）。
- */
 export function loadSqliteAddon(extensionPath: string): NativeAddon {
     if (cachedAddon) {
         return cachedAddon;
@@ -122,15 +102,10 @@ export function loadSqliteAddon(extensionPath: string): NativeAddon {
 export interface DatabaseOpenOptions {
     readonly?: boolean;
     fileMustExist?: boolean;
-    /** SQLite 锁等待超时，单位毫秒。默认 5000。 */
     timeout?: number;
-    /** 调试时的 SQL 日志回调。 */
     verbose?: (sql: string) => void;
 }
 
-/**
- * 单条预编译 SQL 语句的轻量封装。
- */
 export class Statement {
     private readonly native: NativeStatement;
 
@@ -160,12 +135,7 @@ export class Statement {
     }
 }
 
-/**
- * SQLite 数据库连接的最小封装：仅保留 IDE 健康检查所需的能力。
- */
 export class Database {
-    private readonly native: NativeDatabase;
-
     constructor(extensionPath: string, filename: string, options: DatabaseOpenOptions = {}) {
         const addon = loadSqliteAddon(extensionPath);
 
@@ -190,9 +160,7 @@ export class Database {
             }
         }
 
-        // native 构造签名（与 better-sqlite3 v11 保持一致）：
-        // (filename, filenameGiven, anonymous, readonly, fileMustExist, timeout, verbose, buffer)
-        this.native = new addon.Database(
+        const native = new addon.Database(
             trimmed,
             trimmed,
             anonymous,
@@ -202,37 +170,50 @@ export class Database {
             verbose,
             null
         );
+
+        // 必须与官方 better-sqlite3 相同：native 库通过该 Symbol 关联 JS 包装对象。
+        Object.defineProperty(this, CPPDB, { value: native, writable: false, configurable: false });
+    }
+
+    private get cppdb(): NativeDatabase {
+        return (this as DatabaseWithCppdb)[CPPDB];
     }
 
     prepare(sql: string): Statement {
-        // 第二个参数本是 JS 端的 Database wrapper，用于 native 侧反向引用；
-        // 这里直接传 `this`，对我们的用法已经足够。
-        const stmt = this.native.prepare(sql, this, false);
-        return new Statement(stmt);
+        return new Statement(this.cppdb.prepare(sql, this, false));
     }
 
     exec(sql: string): this {
-        this.native.exec(sql);
+        this.cppdb.exec(sql);
         return this;
     }
 
     pragma<T = unknown>(source: string, options: { simple?: boolean } = {}): T {
-        const stmt = new Statement(this.native.prepare(`PRAGMA ${source}`, this, true));
+        const stmt = new Statement(this.cppdb.prepare(`PRAGMA ${source}`, this, true));
         return (options.simple ? stmt.pluck().get<T>() : (stmt.all() as unknown as T)) as T;
     }
 
+    /** 将 WAL 合并进主库，便于外部工具直接打开 ide-health.db 查看数据。 */
+    checkpointWal(): void {
+        try {
+            this.pragma('wal_checkpoint(PASSIVE)', { simple: true });
+        } catch {
+            // 非 WAL 模式时忽略
+        }
+    }
+
     close(): this {
-        if (this.native.open) {
-            this.native.close();
+        if (this.cppdb.open) {
+            this.cppdb.close();
         }
         return this;
     }
 
     get open(): boolean {
-        return this.native.open;
+        return this.cppdb.open;
     }
 
     get inTransaction(): boolean {
-        return this.native.inTransaction;
+        return this.cppdb.inTransaction;
     }
 }
